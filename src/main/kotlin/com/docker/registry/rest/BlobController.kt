@@ -1,13 +1,16 @@
 package com.docker.registry.rest
 
-import org.springframework.http.HttpStatus
+import com.docker.registry.store.BlobStore
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import java.io.InputStream
 import java.net.URI
-import java.util.*
 
 @RestController
 class BlobController {
+
+    @Autowired lateinit var blobs: BlobStore
 
     @GetMapping(path = ["/v2/{organization}/{repository}/blobs/{digest}"],
             produces = ["application/octet-stream"])
@@ -15,7 +18,7 @@ class BlobController {
     fun getBlob(@PathVariable organization: String,
                 @PathVariable repository: String,
                 @PathVariable digest: String,
-    ): ByteArray = ByteArray(0)
+    ): ByteArray = blobs.Get(digest)
 
     @RequestMapping(path = ["/v2/{organization}/{repository}/blobs/{digest}"],
                     method = [RequestMethod.HEAD])
@@ -26,22 +29,10 @@ class BlobController {
 
 
     @PostMapping(path = ["/v2/{organization}/{repository}/blobs/uploads"])
-    fun mount(@PathVariable organization: String,
-              @PathVariable repository: String,
-              @RequestParam("mount") digest: String,
-              @RequestParam from: String,
-    ): ResponseEntity<Any> {
-        val uri = URI.create("/v2/$organization/$repository/blobs/$digest")
-        return ResponseEntity.created(uri)
-                .header("Docker-Upload-UUID", digest)
-                .build()
-    }
-
-    @PostMapping(path = ["/v2/{organization}/{repository}/blobs/uploads"])
     fun createUpload(@PathVariable organization: String,
                      @PathVariable repository: String,
     ): ResponseEntity<Any> {
-        val uuid = UUID.randomUUID().toString()
+        val uuid = blobs.CreateUpload()
         val uri = URI.create("/v2/$organization/$repository/blobs/uploads/$uuid")
         return ResponseEntity.accepted()
                 .header("Docker-Upload-UUID", uuid)
@@ -54,24 +45,12 @@ class BlobController {
                      @PathVariable repository: String,
                      @PathVariable uuid: String,
     ): ResponseEntity<Any> {
+        val offset = blobs.GetLastUploadOffset(uuid)
         val uri = URI.create("/v2/$organization/$repository/blobs/uploads/$uuid")
-        val offset = 1024
         return ResponseEntity.noContent()
                 .header("Docker-Upload-UUID", uuid)
                 .header("Range", "bytes=0-$offset")
                 .location(uri).build()
-    }
-
-    @PutMapping(path = ["/v2/{organization}/{repository}/blobs/uploads/{uuid}"])
-    fun monolithicUpload(@PathVariable organization: String,
-                  @PathVariable repository: String,
-                  @PathVariable uuid: String,
-                  @RequestParam digest: String,
-    ): ResponseEntity<Any> {
-        val uri = URI.create("/v2/$organization/$repository/blobs/$digest")
-        return ResponseEntity.created(uri)
-                .header("Docker-Content-Digest", digest)
-                .build()
     }
 
     @PatchMapping(path = ["/v2/{organization}/{repository}/blobs/uploads/{uuid}"])
@@ -80,9 +59,10 @@ class BlobController {
                        @PathVariable uuid: String,
                        @RequestHeader("Content-Length") length: Int,
                        @RequestHeader("Content-Range") range: String,
+                       @RequestBody content: ByteArray,
     ): ResponseEntity<Any> {
+        var offset = blobs.Append(uuid, content)
         val uri = URI.create("/v2/$organization/$repository/blobs/uploads/$uuid")
-        val offset = 1024 + length
         return ResponseEntity.accepted()
                 .header("Docker-Upload-UUID", uuid)
                 .header("Range", "bytes=0-$offset")
@@ -94,16 +74,28 @@ class BlobController {
     fun cancelUpload(@PathVariable organization: String,
                      @PathVariable repository: String,
                      @PathVariable uuid: String,
-    ): Any = Unit
+    ): Any {
+        blobs.Delete(uuid)
+        return Unit
+    }
 
     @PutMapping(path = ["/v2/{organization}/{repository}/blobs/uploads/{uuid}"])
     fun completeUpload(@PathVariable organization: String,
                        @PathVariable repository: String,
                        @PathVariable uuid: String,
-                       @RequestHeader("Content-Length") length: Int,
-                       @RequestHeader("Content-Range") range: String,
-                       @RequestParam digest: String,
+                       @RequestHeader("Content-Length") length: Int?,
+                       @RequestHeader("Content-Range") range: String?,
+                       @RequestParam(required = false) digest: String?,
+                       @RequestParam(required = false) mount: String?,
+                       @RequestParam(required = false) from: String?,
+                       @RequestBody content: ByteArray,
     ): ResponseEntity<Any> {
+        mount?.run {
+            // TODO create mount
+        }
+        digest?.run {
+            blobs.Upload(uuid, content, this)
+        }
         val uri = URI.create("/v2/$organization/$repository/blobs/$digest")
         return ResponseEntity.created(uri)
                 .header("Docker-Content-Digest", digest)
