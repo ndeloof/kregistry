@@ -29,18 +29,24 @@ class NaiveBlobStore: BlobStore {
         val file = File(root, uuid)
         file.appendBytes(content)
 
-        val i = digest.indexOf(':')
-        val algorithm = digest.substring(0,i)
-        val expected = digest.substring(i+1)
-        var digested: String
-        when (algorithm) {
-            "sha256" -> digested = DigestUtils.sha256Hex(FileInputStream(file))
-            else -> throw NoSuchAlgorithmException(algorithm)
+        val (algorithm, expected) = split(digest)
+        val digested = FileInputStream(file).use {
+            when (algorithm) {
+                "sha256" -> DigestUtils.sha256Hex(it)
+                else -> throw NoSuchAlgorithmException(algorithm)
+            }
         }
 
         if (digested != expected) {
             throw IllegalArgumentException("Invalid digest, $digested != $digest")
         }
+    }
+
+    private fun split(digest: String): Pair<String, String> {
+        val i = digest.indexOf(':')
+        val algorithm = digest.substring(0, i)
+        val expected = digest.substring(i + 1)
+        return Pair(algorithm, expected)
     }
 
     override fun GetLastUploadOffset(uuid: String): Long {
